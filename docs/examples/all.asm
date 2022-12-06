@@ -953,8 +953,8 @@ fizzbuzz_main:
         push 'z'
         out
         ret
-.num:    push 0 ; end marker
-..loop:  dup 1
+.num:   push 0 ; end marker
+..loop: dup 1
         push 10
         op /
         op floor
@@ -970,6 +970,7 @@ fizzbuzz_main:
         cmp !
         jmp ..loop
         outs
+        pop 1
         ret
 ; truth machine
 truth_main:
