@@ -17,3 +17,6 @@ version = "0.4.17"
 
 [dependencies.wee_alloc]
 version = "0.4.5"
+
+[dependencies.console_error_panic_hook]
+version = "0.1.7"

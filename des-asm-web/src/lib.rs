@@ -53,6 +53,7 @@ impl log::Log for Logger {
 #[wasm_bindgen(start)]
 pub fn main() {
 	log("main called");
+	std::panic::set_hook(Box::new(console_error_panic_hook::hook));
 	log::set_logger(Box::leak(Box::new(Logger)))
 		.map(|_| log::set_max_level(log::LevelFilter::Trace))
 		.unwrap();
@@ -61,7 +62,7 @@ pub fn main() {
 
 #[wasm_bindgen]
 pub fn compile(input: &str, format: &str) -> String {
-	log::debug!("compile: {format:?} {input:?}");
+	// log::debug!("compile: {format:?} {input:?}");
 	let mut outputter: Box<dyn Outputter> = match format {
 		"list" => Box::new(ListOutputter),
 		"tagged" => Box::new(TaggedOutputter),

@@ -75,7 +75,7 @@ impl Outputter for TaggedOutputter {
 }
 impl Outputter for DesmosOutputter {
 	fn start_lit(&mut self, f: &mut dyn Write) -> io::Result<()> {
-		write!(f, "v_{{pV}}=\\left[")
+		write!(f, "s_{{pV}}=\\left[")
 	}
 	fn write_lit(&mut self, idx: u16, value: f64, f: &mut dyn Write) -> io::Result<()> {
 		if idx > 0 {
@@ -84,7 +84,7 @@ impl Outputter for DesmosOutputter {
 		write!(f, "{value}")
 	}
 	fn start_expr(&mut self, f: &mut dyn Write) -> io::Result<()> {
-		write!(f, "\\right]\nv_{{pC}}=\\left[")
+		write!(f, "\\right]\n\ns_{{pC}}=\\left[")
 	}
 	fn write_label(&mut self, _addr: u16, _name: &str, _f: &mut dyn Write) -> io::Result<()> {
 		Ok(())
@@ -163,7 +163,7 @@ impl fmt::Display for Op {
 			Op::UExp10 => write!(f, "10^"),
 			Op::UExp2 => write!(f, "2^"),
 			Op::UExp => write!(f, "e^"),
-			Op::UNeg => write!(f, "-1"),
+			Op::UNeg => write!(f, "1-"),
 			Op::USin => write!(f, "sin"),
 			Op::UCos => write!(f, "cos"),
 			Op::UTan => write!(f, "tan"),
@@ -207,19 +207,36 @@ impl fmt::Display for Op {
 	}
 }
 #[derive(Debug)]
-pub enum Ir0 {
+enum Jmp {
+	Label(Vec<String>),
+	Addr(u16),
+}
+#[derive(Debug)]
+enum Ir0 {
 	Nop,
 	Dup(u16),
-	Push(u16),
-	Jmp(Vec<String>),
-	Call(Vec<String>),
+	Push(Lit),
+	Jmp(Jmp),
+	Call(Jmp),
 	Op(Op),
 	Pop(u16),
 	Cmp(u8),
 	Ret,
 	In,
 	Out,
-	OutC,
+	MemR,
+	MemW,
+	ProgR,
+	ProgW,
+	ValR,
+	ValW,
+	OutS,
+}
+#[derive(Debug)]
+enum Lit {
+	Label(Vec<String>),
+	Num(f64),
+	Id(u16),
 }
 #[derive(Debug)]
 #[repr(u16)]
@@ -235,7 +252,13 @@ pub enum Ir1 {
 	Ret,
 	In,
 	Out,
-	OutC,
+	MemR,
+	MemW,
+	ProgR,
+	ProgW,
+	ValR,
+	ValW,
+	OutS,
 }
 impl Ir1 {
 	fn to_num(&self) -> u16 {
@@ -251,7 +274,13 @@ impl Ir1 {
 			Ir1::Ret => 8,
 			Ir1::In => 9,
 			Ir1::Out => 10,
-			Ir1::OutC => 11,
+			Ir1::MemR => 11,
+			Ir1::MemW => 12,
+			Ir1::ProgR => 13,
+			Ir1::ProgW => 14,
+			Ir1::ValR => 15,
+			Ir1::ValW => 16,
+			Ir1::OutS => 20,
 		}
 	}
 }
@@ -278,7 +307,13 @@ impl fmt::Display for Ir1 {
 			Ir1::Ret => write!(f, "ret"),
 			Ir1::In => write!(f, "in"),
 			Ir1::Out => write!(f, "out"),
-			Ir1::OutC => write!(f, "outc"),
+			Ir1::MemR => write!(f, "memr"),
+			Ir1::MemW => write!(f, "memw"),
+			Ir1::ProgR => write!(f, "progr"),
+			Ir1::ProgW => write!(f, "progw"),
+			Ir1::ValR => write!(f, "valr"),
+			Ir1::ValW => write!(f, "valw"),
+			Ir1::OutS => write!(f, "outs"),
 		}
 	}
 }
@@ -293,6 +328,15 @@ impl<T: Iterator<Item = char>> Lexer<Peekable<T>> {
 			iter: v.peekable(),
 			line
 		}
+	}
+	fn peek_char(&mut self) -> char {
+		let res = match self.iter.peek() {
+			Some('\0') => ' ',
+			Some(v) => *v,
+			None => '\0',
+		};
+		log::trace!("lex peek_char {res:?}");
+		res
 	}
 	fn peek(&mut self) -> char {
 		let res = match self.iter.peek() {
@@ -328,7 +372,7 @@ impl<T: Iterator<Item = char>> Lexer<Peekable<T>> {
 		let mut out = String::new();
 		loop {
 			match self.peek() {
-				'\0' | '\'' | ':' | '\x01'..=' ' | '\u{A0}' | '\u{1680}' | '\u{180E}' | '\u{2000}'..='\u{200B}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}' => break,
+				'\0' | '\'' | ':' | '\x01'..=' ' | '@' | '\u{A0}' | '\u{1680}' | '\u{180E}' | '\u{2000}'..='\u{200B}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}' => break,
 				'>' | '<' | '=' | '!' | '+' | '-' | '*' | '/' | '%' | '^' if !op => break,
 				c => {
 					out.push(c);
@@ -349,21 +393,24 @@ impl<T: Iterator<Item = char>> Lexer<Peekable<T>> {
 			None => hard_error!("line {} invalid number {id:?}", self.line),
 		}
 	}
-	fn lit(&mut self) -> f64 {
+	fn lit(&mut self, last: &[String]) -> Lit {
 		log::trace!("lex lit");
 		match self.peek() {
+			'@' => {
+				Lit::Label(expand_id(self.line, last, &self.id(false)))
+			}
 			'\'' => {
-				let r = self.adv().peek();
+				let r = self.adv().peek_char();
 				if self.adv().peek() != '\'' {
 					hard_error!("line {} invalid char", self.line);
 				}
 				self.adv();
-				r as u32 as f64
+				Lit::Num(r as u32 as f64)
 			}
 			'0'..='9' | '.' | '+' | '-' => {
 				let id = self.id(true);
 				match id.parse() {
-					Ok(v) => v,
+					Ok(v) => Lit::Num(v),
 					Err(_) => hard_error!("line {} invalid number {id:?}", self.line),
 				}
 			}
@@ -420,29 +467,24 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 					c.space().eol();
 				},
 				"push" => {
-					let v = c.space().lit();
+					ir0.push(Ir0::Push(c.space().lit(&last)));
 					c.space().eol();
-					let i = match lit.iter().enumerate().find(|(_, i)| i == &&v) {
-						Some((v, _)) => v,
-						None => {
-							lit.push(v);
-							lit.len() - 1
-						}
-					};
-					if i >= 10000 {
-						hard_error!("too many literals");
-					}
-					ir0.push(Ir0::Push(i as u16));
 				},
 				"jmp" => {
-					let l = expand_id(line, &last, &c.space().id(false));
+					if c.space().peek() == '@' {
+						ir0.push(Ir0::Jmp(Jmp::Addr(c.int(0..10000))));
+					} else {
+						ir0.push(Ir0::Jmp(Jmp::Label(expand_id(line, &last, &c.id(false)))));
+					}
 					c.space().eol();
-					ir0.push(Ir0::Jmp(l));
 				},
 				"call" => {
-					let l = expand_id(line, &last, &c.space().id(false));
+					if c.space().peek() == '@' {
+						ir0.push(Ir0::Call(Jmp::Addr(c.int(0..10000))));
+					} else {
+						ir0.push(Ir0::Call(Jmp::Label(expand_id(line, &last, &c.id(false)))));
+					}
 					c.space().eol();
-					ir0.push(Ir0::Call(l));
 				},
 				"op" => {
 					let id = c.space().id(true);
@@ -456,7 +498,7 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 						"10^" => Op::UExp10,
 						"2^" => Op::UExp2,
 						"e^" => Op::UExp,
-						"-1" => Op::UNeg,
+						"1-" => Op::UNeg,
 						"sin" => Op::USin,
 						"cos" => Op::UCos,
 						"tan" => Op::UTan,
@@ -517,7 +559,7 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 						};
 					}
 					if out == 0 {
-						hard_error!("line {line} no cmp!");
+						hard_error!("line {line} always-false cmp cannot be encoded");
 					}
 					ir0.push(Ir0::Cmp(out));
 				},
@@ -533,8 +575,32 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 					ir0.push(Ir0::Out);
 					c.space().eol();
 				},
-				"outc" => {
-					ir0.push(Ir0::OutC);
+				"memr" => {
+					ir0.push(Ir0::MemR);
+					c.space().eol();
+				},
+				"memw" => {
+					ir0.push(Ir0::MemW);
+					c.space().eol();
+				},
+				"progr" => {
+					ir0.push(Ir0::ProgR);
+					c.space().eol();
+				},
+				"progw" => {
+					ir0.push(Ir0::ProgW);
+					c.space().eol();
+				},
+				"valr" => {
+					ir0.push(Ir0::ValR);
+					c.space().eol();
+				},
+				"valw" => {
+					ir0.push(Ir0::ValW);
+					c.space().eol();
+				},
+				"outs" => {
+					ir0.push(Ir0::OutS);
 					c.space().eol();
 				},
 				c => hard_error!("line {line} invalid cmd {c:?}"),
@@ -557,6 +623,28 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 			.or_insert_with(Vec::new)
 			.push(out);
 	}
+	for expr in &mut ir0 {
+		if let Ir0::Push(l) = expr {
+			let v = match l {
+				Lit::Label(k) => {
+					*labels.get(&*k).unwrap_or_else(|| hard_error!("no key {k:?}")) as f64
+				}
+				Lit::Num(n) => *n,
+				_ => hard_error!("pre-resolved lit??"),
+			};
+			let i = match lit.iter().enumerate().find(|(_, i)| i == &&v) {
+				Some((v, _)) => v,
+				None => {
+					lit.push(v);
+					lit.len() - 1
+				}
+			};
+			if i >= 10000 {
+				hard_error!("too many literals");
+			}
+			*l = Lit::Id(i as u16);
+		}
+	}
 	h(out.start_lit(out_file));
 	for (id, lit) in lit.iter().enumerate() {
 		h(out.write_lit(id as u16, *lit, out_file));
@@ -569,65 +657,42 @@ pub fn run(in_file: &mut dyn BufRead, out_file: &mut dyn Write, out: &mut dyn Ou
 		h(out.write_expr(addr as u16, match expr {
 			Ir0::Nop => Ir1::Nop,
 			Ir0::Dup(v) => Ir1::Dup(v),
-			Ir0::Push(v) => Ir1::Push(v, lit[v as usize]),
-			Ir0::Jmp(k) => {
+			Ir0::Push(Lit::Id(v)) => Ir1::Push(v, lit[v as usize]),
+			Ir0::Push(v) => hard_error!("unresolved literal {v:?}"),
+			Ir0::Jmp(Jmp::Label(k)) => {
 				let mut out = String::new();
 				for _ in 1..k.len() {
 					out.push('.');
 				}
 				out.push_str(k.last().unwrap());
-				let l = labels[&k];
-				Ir1::Jmp(l, out)
+				let l = labels.get(&k).unwrap_or_else(|| hard_error!("no key {k:?}"));
+				Ir1::Jmp(*l, out)
 			}
-			Ir0::Call(k) => {
+			Ir0::Jmp(Jmp::Addr(a)) => Ir1::Jmp(a, format!("@{a}")),
+			Ir0::Call(Jmp::Label(k)) => {
 				let mut out = String::new();
 				for _ in 1..k.len() {
 					out.push('.');
 				}
 				out.push_str(k.last().unwrap());
-				let l = labels[&k];
-				Ir1::Call(l, out)
+				let l = labels.get(&k).unwrap_or_else(|| hard_error!("no key {k:?}"));
+				Ir1::Call(*l, out)
 			}
+			Ir0::Call(Jmp::Addr(a)) => Ir1::Call(a, format!("@{a}")),
 			Ir0::Op(v) => Ir1::Op(v),
 			Ir0::Pop(v) => Ir1::Pop(v),
 			Ir0::Cmp(v) => Ir1::Cmp(v),
 			Ir0::Ret => Ir1::Ret,
 			Ir0::In => Ir1::In,
 			Ir0::Out => Ir1::Out,
-			Ir0::OutC => Ir1::OutC,
+			Ir0::MemR => Ir1::MemR,
+			Ir0::MemW => Ir1::MemW,
+			Ir0::ProgR => Ir1::ProgR,
+			Ir0::ProgW => Ir1::ProgW,
+			Ir0::ValR => Ir1::ValR,
+			Ir0::ValW => Ir1::ValW,
+			Ir0::OutS => Ir1::OutS,
 		}, out_file));
 	}
 	h(out.end(out_file));
 }
-/*
-syntax:
-[] = whitespace
-[num] = integer
-[char] = byte / \x--
-[lit]
-	[num]
-	'[char]'
-[id] = most-of-utf8 ident
-[opn]
-[cmp]
-[op]
-	nop
-	dup[][num 0..9999]
-	push[][lit]
-	jmp[][id]
-	call[][id]
-	op[][opn]
-	pop[][num 1..=1000]
-	cmp[][cmp]
-	ret
-	in
-	out
-	outc
-[line]
-	[][op][]\n
-	[][id][]:[]\n
-	\n
-	[];.*\n
-[file]
-	[line*]
-*/
