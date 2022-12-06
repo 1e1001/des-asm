@@ -33,7 +33,7 @@ bf_main:
         push '+'
         push '0'
         outs
-..end:  push 8
+        push 8
         memw
 .input: push 0
         memr

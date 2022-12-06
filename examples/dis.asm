@@ -1,5 +1,6 @@
 ; self-disassembler
 dis_main:
+        push 0
         push '?'
         push 'r'
         push 'd'
@@ -78,6 +79,10 @@ dis_main:
         push 9
         cmp =
         jmp .p_in
+        dup 1
+        push 1000
+        cmp >=
+        jmp .large
         dup 1
         push 10
         cmp =
@@ -298,7 +303,7 @@ dis_main:
         push 208
         cmp =
         jmp .p_batan2
-        dup 1
+.large: dup 1
         push 2000
         cmp <
         jmp .p_pop
@@ -315,7 +320,7 @@ dis_main:
         cmp <
         jmp .p_push
         jmp .p_dup
-.exit:  pop 4
+.exit:  pop 3
         op ++
         dup 0
         push 10000
@@ -613,10 +618,10 @@ dis_main:
         push 'c'
         jmp .join
 .p_push:
-        dup 2
         push 2
         dup 3
         memw
+        dup 2
         call .num
         push ' '
         push ';'
@@ -628,18 +633,18 @@ dis_main:
         dup 0
         push 0
         cmp =
-        call ..fix
+        jmp ..fix
         push '''
+..unfix:
         push ' '
         push 'h'
         push 's'
         push 'u'
         push 'p'
         jmp .join
-..fix:  pop 1
+..fix:  pop 2
         push '0'
-        push '\'
-        ret
+        jmp ..unfix
 .p_dup:
         dup 2
         call .num
@@ -648,7 +653,7 @@ dis_main:
         push 'u'
         push 'd'
 .join:  outs
-        jmp .join
+        jmp .exit
 .g_sin: push 'n'
         push 'i'
         push 's'
