@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<meta charset="utf-8" />
+	<title>des-asm</title>
+	<style>
+		#c {
+			display: flex;
+			flex-direction: row;
+			height: calc(100vh - 2.5em);
+		}
+
+		@media screen and (max-aspect-ratio: 1) {
+			#c {
+				flex-direction: column;
+			}
+		}
+
+		textarea {
+			flex: 1 0 0%;
+			resize: none;
+		}
+
+	</style>
+</head>
+
+<body>
+	<div id="c">
+		<textarea id="input"></textarea>
+		<textarea id="output"></textarea>
+	</div>
+	<button id="run">Compile</button>
+	Output Format:
+	<select id="format">
+		<option value="list">List - List of decimal values</option>
+		<option value="tagged">Tagged - Like list, but side-by-side with the input assembly</option>
+		<option value="desmos">Desmos - Format ready for insertion into Desmos</option>
+	</select>
+	<select id="example">
+		<option value="">select example</option>
+		<option value='.bf.asm'>.bf.asm ; interpreter - nonworking</option><option value='charset.asm'>charset.asm ;</option><option value='dis.asm'>dis.asm ; self-disassembler</option><option value='fizzbuzz.asm'>fizzbuzz.asm ;</option><option value='truth.asm'>truth.asm ; truth machine</option><option value='all.asm'>all.asm ; example loader (auto-generated)</option>
+	</select>
+	<button id="save">Save</button>
+	<input type="" id="load" accept=".asm" />
+	<script src="des_asm_web.js"></script>
+	<script>
+		window.asm_error = (v) => {
+			console.error(v);
+			output.value += v.toString();
+		}
+		wasm_bindgen("des_asm_web_bg.wasm").then(() => {
+			input.value = "";
+			example.value = "";
+			format.value = "desmos";
+			load.type = "file";
+			run.onclick = () => {
+				output.value = "";
+				try {
+					output.value = wasm_bindgen.compile(input.value, format.value);
+				} catch (e) {
+					window.asm_error(e);
+				}
+			};
+			example.onchange = () => {
+				if (example.value)
+					fetch("./examples/" + example.value).then((v) => v.text()).then((v) => input.value = v);
+				example.value = "";
+			};
+			load.onchange = (e) => {
+				e.target.files[0].text().then((v) => {
+					input.value = v;
+					load.type = "";
+					load.type = "file";
+				});
+			};
+			save.onclick = () => {
+				var data = input.value;
+				var filename = "unnamed.asm";
+				var type = "text/plain";
+				// https://stackoverflow.com/questions/13405129/
+				var file = new Blob([data], { type: type });
+				if (window.navigator.msSaveOrOpenBlob)
+					window.navigator.msSaveOrOpenBlob(file, filename);
+				else { // Others
+					var a = document.createElement("a"),
+						url = URL.createObjectURL(file);
+					a.href = url;
+					a.download = filename;
+					document.body.appendChild(a);
+					a.click();
+					setTimeout(function () {
+						document.body.removeChild(a);
+						window.URL.revokeObjectURL(url);
+					}, 0);
+				}
+			}
+		});
+	</script>
+</body>
+
+</html>
